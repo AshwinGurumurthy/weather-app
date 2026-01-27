@@ -1,0 +1,254 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { Coordinates, WeatherData, PrecipitationObservation, ForecastPeriod, HourlyForecast } from './types/weather';
+
+// Import components
+import WeatherHeader from './components/weather-header/page';
+import LocationSearch from './components/location-search/page';
+import CurrentWeather from './components/current-weather/page';
+import FiveDayForecast from './components/five-day-forecast/page';
+import HourlyForecastComponent from './components/hourly-forecast/page';
+import PrecipitationHistory from './components/precipitation-history/page';
+import LoadingState from './components/loading-state/page';
+import ErrorState from './components/error-state/page';
+import Footer from './components/footer/page';
+
+export default function Home() {
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPrecipitation, setShowPrecipitation] = useState(false);
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
+
+  // Fetch weather data from NWS API
+  const fetchWeatherData = useCallback(async (coords: Coordinates) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Step 1: Get the grid point from coordinates
+      const pointsResponse = await fetch(
+        `https://api.weather.gov/points/${coords.lat.toFixed(4)},${coords.lon.toFixed(4)}`,
+        { headers: { 'User-Agent': 'WeatherApp (contact@example.com)' } }
+      );
+
+      if (!pointsResponse.ok) {
+        throw new Error('Location not supported by NWS (US locations only)');
+      }
+
+      const pointsData = await pointsResponse.json();
+      const locationName = `${pointsData.properties.relativeLocation.properties.city}, ${pointsData.properties.relativeLocation.properties.state}`;
+
+      // Step 2: Fetch forecast, hourly forecast, and observation stations in parallel
+      const [forecastResponse, hourlyResponse, stationsResponse] = await Promise.all([
+        fetch(pointsData.properties.forecast, {
+          headers: { 'User-Agent': 'WeatherApp (contact@example.com)' }
+        }),
+        fetch(pointsData.properties.forecastHourly, {
+          headers: { 'User-Agent': 'WeatherApp (contact@example.com)' }
+        }),
+        fetch(pointsData.properties.observationStations, {
+          headers: { 'User-Agent': 'WeatherApp (contact@example.com)' }
+        })
+      ]);
+
+      if (!forecastResponse.ok) {
+        throw new Error('Failed to fetch forecast data');
+      }
+
+      const forecastData = await forecastResponse.json();
+      
+      // Get observation station and fetch historical data
+      let precipitationHistory: PrecipitationObservation[] = [];
+      let totalPrecipitation48h = 0;
+      
+      if (stationsResponse.ok) {
+        const stationsData = await stationsResponse.json();
+        const stationId = stationsData.features?.[0]?.properties?.stationIdentifier;
+        
+        if (stationId) {
+          // Fetch observations from the past 48 hours
+          const now = new Date();
+          const past48h = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+          
+          const observationsResponse = await fetch(
+            `https://api.weather.gov/stations/${stationId}/observations?start=${past48h.toISOString()}&end=${now.toISOString()}`,
+            { headers: { 'User-Agent': 'WeatherApp (contact@example.com)' } }
+          );
+          
+          if (observationsResponse.ok) {
+            const observationsData = await observationsResponse.json();
+            
+            // Process observations to extract precipitation data
+            precipitationHistory = observationsData.features
+              ?.filter((obs: any) => obs.properties?.precipitationLastHour?.value !== null)
+              ?.map((obs: any) => ({
+                timestamp: obs.properties.timestamp,
+                precipitation: obs.properties.precipitationLastHour?.value || 0,
+                description: obs.properties.textDescription || ''
+              })) || [];
+            
+            // Calculate total precipitation
+            totalPrecipitation48h = precipitationHistory.reduce(
+              (sum: number, obs: PrecipitationObservation) => sum + (obs.precipitation || 0),
+              0
+            );
+          }
+        }
+      }
+
+      // Process current weather from the first forecast period
+      const currentPeriod = forecastData.properties.periods[0];
+      const current = {
+        temperature: currentPeriod.temperature,
+        temperatureUnit: currentPeriod.temperatureUnit,
+        shortForecast: currentPeriod.shortForecast,
+        icon: currentPeriod.icon,
+        windSpeed: currentPeriod.windSpeed,
+        windDirection: currentPeriod.windDirection,
+        humidity: currentPeriod.relativeHumidity?.value || null
+      };
+
+      // Process 5-day forecast (get day periods only)
+      const forecast: ForecastPeriod[] = forecastData.properties.periods
+        .filter((p: ForecastPeriod) => p.isDaytime)
+        .slice(0, 5);
+
+      // Process hourly forecast (next 156 hours / ~6.5 days)
+      let hourlyForecast: HourlyForecast[] = [];
+      if (hourlyResponse.ok) {
+        const hourlyData = await hourlyResponse.json();
+        hourlyForecast = hourlyData.properties.periods
+          .slice(0, 156)
+          .map((p: any) => ({
+            startTime: p.startTime,
+            temperature: p.temperature,
+            temperatureUnit: p.temperatureUnit,
+            shortForecast: p.shortForecast,
+            windSpeed: p.windSpeed,
+            windDirection: p.windDirection,
+            probabilityOfPrecipitation: p.probabilityOfPrecipitation?.value || 0
+          }));
+      }
+
+      setWeatherData({
+        location: locationName,
+        current,
+        forecast,
+        hourlyForecast,
+        precipitationHistory,
+        totalPrecipitation48h
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch weather data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Get current location
+  const getCurrentLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    
+    const options: PositionOptions = {
+      enableHighAccuracy: false,
+      timeout: 10000,
+      maximumAge: 300000 // 5 minutes cache
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetchWeatherData({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude
+        });
+      },
+      (err) => {
+        setLoading(false);
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            setError('Location access denied. Please enable location permissions or search for a city.');
+            break;
+          case err.POSITION_UNAVAILABLE:
+            setError('Location unavailable. Please search for a city.');
+            break;
+          case err.TIMEOUT:
+            setError('Location request timed out. Please try again or search for a city.');
+            break;
+          default:
+            setError('Unable to get your location. Please search for a city.');
+        }
+      },
+      options
+    );
+  }, [fetchWeatherData]);
+
+  // Handle location selection from search
+  const handleLocationSelect = (lat: number, lon: number) => {
+    fetchWeatherData({ lat, lon });
+  };
+
+  // Load weather on mount using geolocation
+  useEffect(() => {
+    getCurrentLocation();
+  }, [getCurrentLocation]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-400 via-blue-500 to-purple-600 p-4 md:p-8">
+      <div className="max-w-4xl mx-auto">
+        <WeatherHeader />
+
+        <LocationSearch 
+          onLocationSelect={handleLocationSelect}
+          onGetCurrentLocation={getCurrentLocation}
+        />
+
+        {loading && <LoadingState />}
+
+        {error && !loading && (
+          <ErrorState error={error} onRetry={getCurrentLocation} />
+        )}
+
+        {weatherData && !loading && (
+          <div className="space-y-6">
+            <CurrentWeather 
+              location={weatherData.location} 
+              current={weatherData.current} 
+            />
+
+            <FiveDayForecast 
+              forecast={weatherData.forecast}
+              selectedDayIndex={selectedDayIndex}
+              onDaySelect={setSelectedDayIndex}
+            />
+
+            {selectedDayIndex !== null && (
+              <HourlyForecastComponent
+                hourlyForecast={weatherData.hourlyForecast}
+                forecast={weatherData.forecast}
+                selectedDayIndex={selectedDayIndex}
+                onClose={() => setSelectedDayIndex(null)}
+              />
+            )}
+
+            <PrecipitationHistory
+              precipitationHistory={weatherData.precipitationHistory}
+              totalPrecipitation48h={weatherData.totalPrecipitation48h}
+              isVisible={showPrecipitation}
+              onToggle={() => setShowPrecipitation(!showPrecipitation)}
+            />
+
+            <Footer />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

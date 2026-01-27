@@ -40,18 +40,21 @@ interface ForecastPeriod {
   windDirection: string;
 }
 
-interface PrecipitationObservation {
-  timestamp: string;
-  precipitation: number; // in mm
-  description: string;
+interface HourlyForecast {
+  startTime: string;
+  temperature: number;
+  temperatureUnit: string;
+  shortForecast: string;
+  windSpeed: string;
+  windDirection: string;
+  probabilityOfPrecipitation: number;
 }
 
 interface WeatherData {
   location: string;
   current: CurrentWeather;
   forecast: ForecastPeriod[];
-  precipitationHistory: PrecipitationObservation[];
-  totalPrecipitation48h: number;
+  hourlyForecast: HourlyForecast[];
 }
 
 // Weather icon mapping
@@ -94,8 +97,8 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
   const [showSearch, setShowSearch] = useState(false);
-  const [showPrecipitation, setShowPrecipitation] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
 
   // Fetch weather data from NWS API
   const fetchWeatherData = useCallback(async (coords: Coordinates) => {
@@ -116,12 +119,12 @@ export default function Home() {
       const pointsData = await pointsResponse.json();
       const locationName = `${pointsData.properties.relativeLocation.properties.city}, ${pointsData.properties.relativeLocation.properties.state}`;
 
-      // Step 2: Fetch forecast and observation stations in parallel
-      const [forecastResponse, stationsResponse] = await Promise.all([
+      // Step 2: Fetch forecast and hourly forecast in parallel
+      const [forecastResponse, hourlyResponse] = await Promise.all([
         fetch(pointsData.properties.forecast, {
           headers: { 'User-Agent': 'WeatherApp (contact@example.com)' }
         }),
-        fetch(pointsData.properties.observationStations, {
+        fetch(pointsData.properties.forecastHourly, {
           headers: { 'User-Agent': 'WeatherApp (contact@example.com)' }
         })
       ]);
@@ -131,45 +134,6 @@ export default function Home() {
       }
 
       const forecastData = await forecastResponse.json();
-      
-      // Get observation station and fetch historical data
-      let precipitationHistory: PrecipitationObservation[] = [];
-      let totalPrecipitation48h = 0;
-      
-      if (stationsResponse.ok) {
-        const stationsData = await stationsResponse.json();
-        const stationId = stationsData.features?.[0]?.properties?.stationIdentifier;
-        
-        if (stationId) {
-          // Fetch observations from the past 48 hours
-          const now = new Date();
-          const past48h = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-          
-          const observationsResponse = await fetch(
-            `https://api.weather.gov/stations/${stationId}/observations?start=${past48h.toISOString()}&end=${now.toISOString()}`,
-            { headers: { 'User-Agent': 'WeatherApp (contact@example.com)' } }
-          );
-          
-          if (observationsResponse.ok) {
-            const observationsData = await observationsResponse.json();
-            
-            // Process observations to extract precipitation data
-            precipitationHistory = observationsData.features
-              ?.filter((obs: any) => obs.properties?.precipitationLastHour?.value !== null)
-              ?.map((obs: any) => ({
-                timestamp: obs.properties.timestamp,
-                precipitation: obs.properties.precipitationLastHour?.value || 0,
-                description: obs.properties.textDescription || ''
-              })) || [];
-            
-            // Calculate total precipitation
-            totalPrecipitation48h = precipitationHistory.reduce(
-              (sum: number, obs: PrecipitationObservation) => sum + (obs.precipitation || 0),
-              0
-            );
-          }
-        }
-      }
 
       // Process current weather from the first forecast period
       const currentPeriod = forecastData.properties.periods[0];
@@ -188,12 +152,28 @@ export default function Home() {
         .filter((p: ForecastPeriod) => p.isDaytime)
         .slice(0, 5);
 
+      // Process hourly forecast (next 156 hours / ~6.5 days)
+      let hourlyForecast: HourlyForecast[] = [];
+      if (hourlyResponse.ok) {
+        const hourlyData = await hourlyResponse.json();
+        hourlyForecast = hourlyData.properties.periods
+          .slice(0, 156)
+          .map((p: any) => ({
+            startTime: p.startTime,
+            temperature: p.temperature,
+            temperatureUnit: p.temperatureUnit,
+            shortForecast: p.shortForecast,
+            windSpeed: p.windSpeed,
+            windDirection: p.windDirection,
+            probabilityOfPrecipitation: p.probabilityOfPrecipitation?.value || 0
+          }));
+      }
+
       setWeatherData({
         location: locationName,
         current,
         forecast,
-        precipitationHistory,
-        totalPrecipitation48h
+        hourlyForecast
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch weather data');
@@ -210,6 +190,14 @@ export default function Home() {
     }
 
     setLoading(true);
+    setError(null);
+    
+    const options: PositionOptions = {
+      enableHighAccuracy: false,
+      timeout: 10000,
+      maximumAge: 300000 // 5 minutes cache
+    };
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
         fetchWeatherData({
@@ -217,10 +205,23 @@ export default function Home() {
           lon: position.coords.longitude
         });
       },
-      () => {
-        setError('Unable to get your location. Please search for a city.');
+      (err) => {
         setLoading(false);
-      }
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            setError('Location access denied. Please enable location permissions or search for a city.');
+            break;
+          case err.POSITION_UNAVAILABLE:
+            setError('Location unavailable. Please search for a city.');
+            break;
+          case err.TIMEOUT:
+            setError('Location request timed out. Please try again or search for a city.');
+            break;
+          default:
+            setError('Unable to get your location. Please search for a city.');
+        }
+      },
+      options
     );
   }, [fetchWeatherData]);
 
@@ -276,30 +277,19 @@ export default function Home() {
     fetchWeatherData({ lat: location.lat, lon: location.lon });
   };
 
-  // Get precipitation history data for display
-  const getPrecipitationData = () => {
-    if (!weatherData?.precipitationHistory) return [];
+  // Get hourly forecast for a specific day
+  const getHourlyForDay = (dayIndex: number) => {
+    if (!weatherData?.hourlyForecast || !weatherData?.forecast[dayIndex]) return [];
     
-    // Group by 6-hour periods for better visualization
-    const sortedData = [...weatherData.precipitationHistory].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
+    const dayStart = new Date(weatherData.forecast[dayIndex].startTime);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
     
-    return sortedData.map(obs => ({
-      time: formatHour(obs.timestamp),
-      date: formatDate(obs.timestamp),
-      precipitation: obs.precipitation,
-      description: obs.description
-    }));
-  };
-
-  // Convert mm to inches
-  const mmToInches = (mm: number) => (mm * 0.0393701).toFixed(2);
-
-  // Get max precipitation value
-  const getMaxPrecipitation = () => {
-    if (!weatherData?.precipitationHistory || weatherData.precipitationHistory.length === 0) return 0;
-    return Math.max(...weatherData.precipitationHistory.map(h => h.precipitation));
+    return weatherData.hourlyForecast.filter(hour => {
+      const hourTime = new Date(hour.startTime);
+      return hourTime >= dayStart && hourTime < dayEnd;
+    });
   };
 
   // Load weather on mount using geolocation
@@ -444,12 +434,18 @@ export default function Home() {
 
             {/* 5-Day Forecast */}
             <div className="bg-white/20 backdrop-blur-md rounded-3xl p-6 shadow-xl">
-              <h3 className="text-xl font-semibold text-white mb-4">5-Day Forecast</h3>
+              <h3 className="text-xl font-semibold text-white mb-2">5-Day Forecast</h3>
+              <p className="text-blue-100 text-sm mb-4">Click a day for hourly details</p>
               <div className="grid grid-cols-5 gap-2 md:gap-4">
                 {weatherData.forecast.map((day, index) => (
-                  <div 
+                  <button 
                     key={index}
-                    className="bg-white/10 rounded-2xl p-3 md:p-4 text-center hover:bg-white/20 transition-colors"
+                    onClick={() => setSelectedDayIndex(selectedDayIndex === index ? null : index)}
+                    className={`rounded-2xl p-3 md:p-4 text-center transition-all cursor-pointer ${
+                      selectedDayIndex === index 
+                        ? 'bg-white/30 ring-2 ring-white' 
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
                   >
                     <p className="text-blue-100 text-sm mb-2">
                       {index === 0 ? 'Today' : formatDay(day.startTime)}
@@ -463,109 +459,61 @@ export default function Home() {
                     <p className="text-xs text-blue-100 mt-1 hidden md:block truncate">
                       {day.shortForecast}
                     </p>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
 
-            {/* Precipitation Toggle Button */}
-            <div className="flex justify-center">
-              <button
-                onClick={() => setShowPrecipitation(!showPrecipitation)}
-                className={`px-6 py-3 rounded-xl font-medium transition-all shadow-lg ${
-                  showPrecipitation 
-                    ? 'bg-white text-blue-600' 
-                    : 'bg-white/20 text-white hover:bg-white/30'
-                }`}
-              >
-                🌧️ {showPrecipitation ? 'Hide' : 'Show'} 48-Hour Precipitation
-                {getMaxPrecipitation() > 0 && (
-                  <span className="ml-2 px-2 py-1 bg-blue-500 text-white text-xs rounded-full">
-                    Max: {getMaxPrecipitation()}%
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* 48-Hour Precipitation Chart */}
-            {showPrecipitation && (
+            {/* Hourly Forecast for Selected Day */}
+            {selectedDayIndex !== null && (
               <div className="bg-white/20 backdrop-blur-md rounded-3xl p-6 shadow-xl">
-                <h3 className="text-xl font-semibold text-white mb-4">
-                  48-Hour Precipitation Probability
-                </h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-semibold text-white">
+                    ⏰ Hourly Forecast - {selectedDayIndex === 0 ? 'Today' : formatDay(weatherData.forecast[selectedDayIndex].startTime)}, {formatDate(weatherData.forecast[selectedDayIndex].startTime)}
+                  </h3>
+                  <button 
+                    onClick={() => setSelectedDayIndex(null)}
+                    className="text-white/70 hover:text-white text-2xl"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
                 <div className="overflow-x-auto">
-                  <div className="min-w-[800px]">
-                    {/* Chart */}
-                    <div className="h-48 flex items-end gap-1 mb-2">
-                      {getPrecipitationData().map((hour, index) => (
-                        <div
-                          key={index}
-                          className="flex-1 flex flex-col items-center group relative"
-                        >
-                          {/* Tooltip */}
-                          <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
-                            {hour.date} {hour.time}<br/>
-                            {hour.probability}% chance<br/>
-                            {hour.forecast}
-                          </div>
-                          
-                          {/* Bar */}
-                          <div
-                            className={`w-full rounded-t transition-all ${
-                              hour.probability > 60 ? 'bg-blue-400' :
-                              hour.probability > 30 ? 'bg-blue-300' :
-                              hour.probability > 0 ? 'bg-blue-200' :
-                              'bg-white/20'
-                            }`}
-                            style={{ height: `${Math.max(hour.probability, 2)}%` }}
-                          />
+                  <div className="flex gap-3 pb-2" style={{ minWidth: 'max-content' }}>
+                    {getHourlyForDay(selectedDayIndex).map((hour, index) => (
+                      <div 
+                        key={index}
+                        className="bg-white/10 rounded-xl p-3 text-center min-w-[80px] hover:bg-white/20 transition-colors"
+                      >
+                        <p className="text-blue-100 text-xs mb-1">
+                          {formatHour(hour.startTime)}
+                        </p>
+                        <p className="text-2xl mb-1">
+                          {getWeatherEmoji(hour.shortForecast, new Date(hour.startTime).getHours() >= 6 && new Date(hour.startTime).getHours() < 20)}
+                        </p>
+                        <p className="text-xl font-semibold text-white mb-1">
+                          {hour.temperature}°
+                        </p>
+                        <p className="text-xs text-blue-200 truncate max-w-[80px]" title={hour.shortForecast}>
+                          {hour.shortForecast}
+                        </p>
+                        <div className="mt-2 pt-2 border-t border-white/10 text-xs text-blue-100">
+                          <p>💨 {hour.windSpeed}</p>
+                          {hour.probabilityOfPrecipitation > 0 && (
+                            <p>🌧️ {hour.probabilityOfPrecipitation}%</p>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    
-                    {/* Time labels */}
-                    <div className="flex gap-1 text-xs text-blue-100">
-                      {getPrecipitationData().filter((_, i) => i % 6 === 0).map((hour, index) => (
-                        <div 
-                          key={index} 
-                          className="flex-1"
-                          style={{ marginLeft: index === 0 ? 0 : 'calc(20% - 1rem)' }}
-                        >
-                          {hour.time}
-                        </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 
-                {/* Legend */}
-                <div className="flex justify-center gap-4 mt-4 text-sm text-blue-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-blue-400 rounded"></div>
-                    <span>&gt;60%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-blue-300 rounded"></div>
-                    <span>31-60%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-blue-200 rounded"></div>
-                    <span>1-30%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-white/20 rounded"></div>
-                    <span>0%</span>
-                  </div>
-                </div>
-
-                {/* Summary */}
-                <div className="mt-4 p-4 bg-white/10 rounded-xl">
-                  <p className="text-white text-center">
-                    <span className="font-semibold">Next 48 Hours:</span>{' '}
-                    {weatherData.hourlyForecast.filter(h => h.probabilityOfPrecipitation > 30).length} hours 
-                    with &gt;30% precipitation chance
+                {getHourlyForDay(selectedDayIndex).length === 0 && (
+                  <p className="text-center text-blue-100 py-4">
+                    No hourly data available for this day
                   </p>
-                </div>
+                )}
               </div>
             )}
 
