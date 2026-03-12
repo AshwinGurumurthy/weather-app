@@ -1,5 +1,3 @@
-// Weather Types
-
 export interface Coordinates {
   lat: number;
   lon: number;
@@ -16,10 +14,11 @@ export interface CurrentWeather {
   temperature: number;
   temperatureUnit: string;
   shortForecast: string;
-  icon: string;
   windSpeed: string;
   windDirection: string;
   humidity: number | null;
+  feelsLike: number | null;
+  isDaytime: boolean;
 }
 
 export interface ForecastPeriod {
@@ -31,17 +30,9 @@ export interface ForecastPeriod {
   temperatureUnit: string;
   shortForecast: string;
   detailedForecast: string;
-  icon: string;
   isDaytime: boolean;
   windSpeed: string;
   windDirection: string;
-}
-
-export interface PrecipitationObservation {
-  timestamp: string;
-  precipitation: number; // in mm
-  description: string;
-  hasData?: boolean; // whether the station reported precipitation data
 }
 
 export interface HourlyForecast {
@@ -58,7 +49,7 @@ export interface WeatherData {
   location: string;
   current: CurrentWeather;
   forecast: ForecastPeriod[];
+  nightForecast: ForecastPeriod[];
   hourlyForecast: HourlyForecast[];
-  precipitationHistory: PrecipitationObservation[];
-  totalPrecipitation48h: number;
+  lastUpdated: Date;
 }
