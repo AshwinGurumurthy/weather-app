@@ -6,7 +6,7 @@ Real-time US weather forecasts powered by the [National Weather Service](https:/
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-38bdf8?logo=tailwindcss)
 
-Deployment link: weather-app-six-sigma-20.vercel.app
+Deployment link: https://weather-app-six-sigma-20.vercel.app
 ---
 
 ## Features
