@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SkyView
+
+Real-time US weather forecasts powered by the [National Weather Service](https://www.weather.gov). No API keys, no sign-up, no ads.
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-38bdf8?logo=tailwindcss)
+
+---
+
+## Features
+
+- **Current conditions** — temperature, feels like, humidity, wind speed & direction
+- **5-day forecast** — daily high and low temperatures at a glance
+- **Hourly breakdown** — tap any forecast day to see hour-by-hour details with precipitation chance
+- **Location search** — search any US city with live autocomplete
+- **Auto-location** — detects your location via the browser geolocation API
+- **°F / °C toggle** — switch temperature units instantly
+- **Dynamic backgrounds** — gradient changes to match current conditions (sunny, rainy, stormy, snowy, night)
+- **No external dependencies** — built on free public APIs with zero third-party UI libraries
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript 5 |
+| Styling | Tailwind CSS 4 |
+| Weather data | [NWS API](https://www.weather.gov/documentation/services-web-api) |
+| Geocoding | [Nominatim / OpenStreetMap](https://nominatim.org) |
+
+---
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Start the dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Build for production
+npm run build
+npm start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## Deployment
 
-To learn more about Next.js, take a look at the following resources:
+### Vercel (recommended)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Vercel has first-class Next.js support and a generous free tier. No configuration is needed.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Via CLI:**
+```bash
+npm install -g vercel
+vercel
+```
 
-## Deploy on Vercel
+**Via dashboard:**
+1. Push this repo to GitHub
+2. Go to [vercel.com](https://vercel.com) → New Project → Import your repo
+3. Click Deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+No environment variables are required.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Other platforms
+
+Any platform that supports Node.js works. Run `npm run build` to produce the production build, then `npm start` to serve it.
+
+---
+
+## API Notes
+
+- **Coverage:** US locations only. The NWS API does not cover international locations.
+- **Rate limits:** The NWS API is free with no enforced rate limits for reasonable use.
+- **Geocoding:** Location search uses Nominatim, which requires a valid `User-Agent` header and asks that you avoid sending more than one request per second.
+
+---
+
+## Project Structure
+
+```
+app/
+├── page.tsx        # Main app — state, data fetching, and UI
+├── layout.tsx      # Root layout with metadata
+└── globals.css     # Global styles and custom scrollbar
+```
+
+---
+
+## License
+
+MIT
