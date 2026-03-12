@@ -43,6 +43,7 @@ export interface HourlyForecast {
   windSpeed: string;
   windDirection: string;
   probabilityOfPrecipitation: number;
+  precipitationMm: number;
 }
 
 export interface WeatherData {
@@ -51,5 +52,26 @@ export interface WeatherData {
   forecast: ForecastPeriod[];
   nightForecast: ForecastPeriod[];
   hourlyForecast: HourlyForecast[];
+  dailyPrecipMm: number[];
   lastUpdated: Date;
+}
+
+export interface WeatherAlert {
+  id: string;
+  event: string;
+  headline: string;
+  description: string;
+  severity: string;
+  urgency: string;
+  onset: string;
+  expires: string;
+  areaDesc: string;
+}
+
+export interface AQIData {
+  usAqi: number;
+  pm25: number | null;
+  pm10: number | null;
+  ozone: number | null;
+  no2: number | null;
 }

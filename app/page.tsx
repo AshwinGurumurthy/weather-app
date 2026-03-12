@@ -1,12 +1,18 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useCallback } from 'react';
-import { Coordinates, LocationResult, WeatherData } from './types/weather';
+import { Coordinates, LocationResult, WeatherData, WeatherAlert, AQIData } from './types/weather';
 import { getBackgroundGradient, toC, NWS_HEADER } from './utils/weather';
 import SearchBar from '@/components/SearchBar/page';
 import CurrentWeather from '@/components/CurrentWeather/page';
 import ForecastGrid from '@/components/ForecastGrid/page';
 import HourlyPanel from '@/components/HourlyPanel/page';
+import WeatherAlerts from '@/components/WeatherAlerts/page';
+import AQICard from '@/components/AQICard/page';
+import WeatherInsights from '@/components/WeatherInsights/page';
+
+const WeatherMap = dynamic(() => import('@/components/WeatherMap/page'), { ssr: false });
 
 export default function Home() {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
@@ -18,6 +24,9 @@ export default function Home() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
   const [isCelsius, setIsCelsius] = useState(false);
+  const [coords, setCoords] = useState<Coordinates | null>(null);
+  const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
+  const [aqiData, setAqiData] = useState<AQIData | null>(null);
 
   const displayTemp = (f: number) => isCelsius ? toC(f) : f;
   const tempUnit = isCelsius ? 'C' : 'F';
@@ -26,6 +35,8 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setSelectedDayIndex(null);
+    setAlerts([]);
+    setAqiData(null);
 
     try {
       const pointsResponse = await fetch(
@@ -40,12 +51,26 @@ export default function Home() {
       const pointsData = await pointsResponse.json();
       const locationName = `${pointsData.properties.relativeLocation.properties.city}, ${pointsData.properties.relativeLocation.properties.state}`;
 
-      const [forecastResponse, hourlyResponse] = await Promise.all([
+      const [forecastResponse, hourlyResponse, precipResponse] = await Promise.all([
         fetch(pointsData.properties.forecast, { headers: NWS_HEADER }),
         fetch(pointsData.properties.forecastHourly, { headers: NWS_HEADER }),
+        fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&hourly=precipitation&timezone=auto&forecast_days=7`
+        ).catch(() => null),
       ]);
 
       if (!forecastResponse.ok) throw new Error('Failed to fetch forecast data');
+
+      // Build hour→precipitation_mm lookup from Open-Meteo (keyed by "YYYY-MM-DDTHH")
+      const precipMap = new Map<string, number>();
+      if (precipResponse?.ok) {
+        try {
+          const precipData = await precipResponse.json();
+          (precipData.hourly.time as string[]).forEach((t, i) => {
+            precipMap.set(t.slice(0, 13), precipData.hourly.precipitation[i] ?? 0);
+          });
+        } catch (_) {}
+      }
 
       const forecastData = await forecastResponse.json();
       const periods = forecastData.properties.periods;
@@ -72,8 +97,22 @@ export default function Home() {
             windSpeed: p.windSpeed,
             windDirection: p.windDirection,
             probabilityOfPrecipitation: p.probabilityOfPrecipitation?.value || 0,
+            precipitationMm: precipMap.get(p.startTime.slice(0, 13)) ?? 0,
           }));
       }
+
+      const dayPeriods = periods.filter((p: any) => p.isDaytime).slice(0, 5);
+
+      // Sum hourly precipitation per forecast day
+      const dailyPrecipMm = dayPeriods.map((day: any) => {
+        const dayStart = new Date(day.startTime);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        return hourlyForecast
+          .filter((h: { startTime: string }) => { const t = new Date(h.startTime); return t >= dayStart && t < dayEnd; })
+          .reduce((sum: number, h: { precipitationMm: number }) => sum + h.precipitationMm, 0);
+      });
 
       setWeatherData({
         location: locationName,
@@ -87,11 +126,54 @@ export default function Home() {
           feelsLike,
           isDaytime: currentPeriod.isDaytime,
         },
-        forecast: periods.filter((p: any) => p.isDaytime).slice(0, 5),
+        forecast: dayPeriods,
         nightForecast: periods.filter((p: any) => !p.isDaytime).slice(0, 5),
         hourlyForecast,
+        dailyPrecipMm,
         lastUpdated: new Date(),
       });
+
+      setCoords(coords);
+
+      // Fetch AQI and NWS alerts in parallel (failures are non-fatal)
+      const [aqiRes, alertsRes] = await Promise.allSettled([
+        fetch(
+          `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coords.lat}&longitude=${coords.lon}&current=us_aqi,pm2_5,pm10,ozone,nitrogen_dioxide&timezone=auto`
+        ),
+        fetch(
+          `https://api.weather.gov/alerts/active?point=${coords.lat.toFixed(4)},${coords.lon.toFixed(4)}`,
+          { headers: NWS_HEADER }
+        ),
+      ]);
+
+      if (aqiRes.status === 'fulfilled' && aqiRes.value.ok) {
+        const data = await aqiRes.value.json();
+        const c = data.current;
+        setAqiData({
+          usAqi: c.us_aqi ?? 0,
+          pm25: c.pm2_5 ?? null,
+          pm10: c.pm10 ?? null,
+          ozone: c.ozone ?? null,
+          no2: c.nitrogen_dioxide ?? null,
+        });
+      }
+
+      if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) {
+        const data = await alertsRes.value.json();
+        setAlerts(
+          (data.features || []).map((f: any) => ({
+            id: f.id,
+            event: f.properties.event,
+            headline: f.properties.headline || '',
+            description: f.properties.description || '',
+            severity: f.properties.severity,
+            urgency: f.properties.urgency,
+            onset: f.properties.onset || '',
+            expires: f.properties.expires || '',
+            areaDesc: f.properties.areaDesc || '',
+          }))
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch weather data');
     } finally {
@@ -242,6 +324,8 @@ export default function Home() {
 
         {weatherData && !loading && (
           <div className="space-y-6">
+            <WeatherAlerts alerts={alerts} />
+
             <CurrentWeather
               location={weatherData.location}
               current={weatherData.current}
@@ -253,6 +337,7 @@ export default function Home() {
             <ForecastGrid
               forecast={weatherData.forecast}
               nightForecast={weatherData.nightForecast}
+              dailyPrecipMm={weatherData.dailyPrecipMm}
               selectedDayIndex={selectedDayIndex}
               onSelectDay={setSelectedDayIndex}
               displayTemp={displayTemp}
@@ -269,11 +354,25 @@ export default function Home() {
               />
             )}
 
+            {aqiData && <AQICard aqi={aqiData} />}
+
+            <WeatherInsights weatherData={weatherData} />
+
+            {coords && <WeatherMap lat={coords.lat} lon={coords.lon} />}
+
             <footer className="text-center text-blue-100 text-sm py-4">
               <p>
                 Data provided by the{' '}
                 <a href="https://www.weather.gov" target="_blank" rel="noopener noreferrer" className="underline opacity-75 hover:opacity-100 transition-opacity">
                   National Weather Service
+                </a>
+                {' '}· Air quality by{' '}
+                <a href="https://open-meteo.com" target="_blank" rel="noopener noreferrer" className="underline opacity-75 hover:opacity-100 transition-opacity">
+                  Open-Meteo
+                </a>
+                {' '}· Maps by{' '}
+                <a href="https://www.rainviewer.com" target="_blank" rel="noopener noreferrer" className="underline opacity-75 hover:opacity-100 transition-opacity">
+                  RainViewer
                 </a>
               </p>
               <p className="text-xs mt-1 opacity-60">US locations only · Free &amp; open data</p>

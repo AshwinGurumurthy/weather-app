@@ -1,7 +1,7 @@
 'use client';
 
 import { HourlyForecast } from '@/app/types/weather';
-import { getWeatherEmoji, formatHour, formatDay, formatDate } from '@/app/utils/weather';
+import { getWeatherEmoji, formatHour, formatDay, formatDate, mmToInches } from '@/app/utils/weather';
 
 interface HourlyPanelProps {
   hours: HourlyForecast[];
@@ -40,6 +40,7 @@ export default function HourlyPanel({
           {hours.map((hour, index) => {
             const hourNum = new Date(hour.startTime).getHours();
             const isDayHour = hourNum >= 6 && hourNum < 20;
+            const precipIn = parseFloat(mmToInches(hour.precipitationMm));
             return (
               <div
                 key={index}
@@ -47,8 +48,8 @@ export default function HourlyPanel({
               >
                 <p className="text-blue-100 text-xs mb-1">{formatHour(hour.startTime)}</p>
                 <p className="text-2xl mb-1">{getWeatherEmoji(hour.shortForecast, isDayHour)}</p>
-                <p className="text-xl font-semibold text-white mb-1">
-                  {displayTemp(hour.temperature)}°
+                <p className="text-xl font-semibold text-white mb-0.5">
+                  {displayTemp(hour.temperature)}°{tempUnit}
                 </p>
                 <p className="text-xs text-blue-200 truncate max-w-[80px]" title={hour.shortForecast}>
                   {hour.shortForecast}
@@ -57,6 +58,9 @@ export default function HourlyPanel({
                   <p>💨 {hour.windSpeed}</p>
                   {hour.probabilityOfPrecipitation > 0 && (
                     <p>🌧️ {hour.probabilityOfPrecipitation}%</p>
+                  )}
+                  {precipIn >= 0.01 && (
+                    <p>💧 {precipIn.toFixed(2)}"</p>
                   )}
                 </div>
               </div>

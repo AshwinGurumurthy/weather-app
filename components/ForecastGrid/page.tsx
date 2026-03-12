@@ -1,11 +1,12 @@
 'use client';
 
 import { ForecastPeriod } from '@/app/types/weather';
-import { getWeatherEmoji, formatDay, formatDate } from '@/app/utils/weather';
+import { getWeatherEmoji, formatDay, formatDate, mmToInches } from '@/app/utils/weather';
 
 interface ForecastGridProps {
   forecast: ForecastPeriod[];
   nightForecast: ForecastPeriod[];
+  dailyPrecipMm: number[];
   selectedDayIndex: number | null;
   onSelectDay: (index: number | null) => void;
   displayTemp: (f: number) => number;
@@ -14,6 +15,7 @@ interface ForecastGridProps {
 export default function ForecastGrid({
   forecast,
   nightForecast,
+  dailyPrecipMm,
   selectedDayIndex,
   onSelectDay,
   displayTemp,
@@ -25,6 +27,7 @@ export default function ForecastGrid({
       <div className="grid grid-cols-5 gap-2 md:gap-3">
         {forecast.map((day, index) => {
           const night = nightForecast[index];
+          const precipIn = parseFloat(mmToInches(dailyPrecipMm[index] ?? 0));
           return (
             <button
               key={index}
@@ -48,6 +51,12 @@ export default function ForecastGrid({
               {night && (
                 <p className="text-sm text-blue-300">
                   {displayTemp(night.temperature)}°
+                </p>
+              )}
+              {precipIn >= 0.01 && (
+                <p className="text-xs text-blue-200 mt-1.5 flex items-center justify-center gap-0.5">
+                  <span>🌧️</span>
+                  <span>{precipIn.toFixed(2)}"</span>
                 </p>
               )}
               <p className="text-xs text-blue-100 mt-1 hidden md:block truncate">

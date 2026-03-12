@@ -90,13 +90,18 @@ Any platform that supports Node.js works. Run `npm run build` to produce the pro
 
 ```
 app/
-├── page.tsx        # Main app — state, data fetching, and UI
-├── layout.tsx      # Root layout with metadata
-├── globals.css     # Global styles and custom scrollbar
+├── page.tsx            # Main app — state, data fetching, and UI
+├── layout.tsx          # Root layout with metadata
+├── globals.css         # Global styles and custom scrollbar
 ├── types/
-│   └── weather.ts  # TypeScript interfaces
+│   └── weather.ts      # TypeScript interfaces
 └── utils/
-    └── weather.ts  # Helper functions (emoji mapping, date formatting)
+    └── weather.ts      # Helper functions (emoji mapping, date formatting)
+components/
+├── SearchBar/          # City search input with live autocomplete
+├── CurrentWeather/     # Current conditions card
+├── ForecastGrid/       # 5-day forecast grid
+└── HourlyPanel/        # Hourly breakdown panel for a selected day
 ```
 
 ---
